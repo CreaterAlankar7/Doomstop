@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -26,7 +27,6 @@ import androidx.core.app.NotificationCompat
 import java.util.Calendar
 
 class MonitorService : Service() {
-    private val IG = "com.instagram.android"
     private val handler = Handler(Looper.getMainLooper())
     private var overlay: View? = null
 
@@ -44,7 +44,7 @@ class MonitorService : Service() {
             NotificationChannel("doomstop", "Doomstop", NotificationManager.IMPORTANCE_LOW)
         )
         val n = NotificationCompat.Builder(this, "doomstop")
-            .setContentTitle("Doomstop is watching Instagram")
+            .setContentTitle("Doomstop is running")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
@@ -61,13 +61,32 @@ class MonitorService : Service() {
     }
 
     private fun check() {
-        val limitMs = getSharedPreferences("doomstop", Context.MODE_PRIVATE)
-            .getInt("limit", 30) * 60_000L
-        val (used, inForeground) = instagramUsage()
-        if (inForeground && used >= limitMs) showOverlay() else hideOverlay()
+        val p = Store.prefs(this)
+        val limitMs = p.getInt("limit", 30) * 60_000L
+        val scrollLimit = p.getInt("scroll_limit", 50)
+        val apps = Store.enabled(this)
+        val usage = usageFor(apps)
+
+        var blockedApp: String? = null
+        var reason = ""
+        for (pkg in apps) {
+            val (used, fg) = usage[pkg] ?: Pair(0L, false)
+            if (!fg) continue
+            if (used >= limitMs) {
+                blockedApp = Apps.all[pkg]
+                reason = "You used up your ${limitMs / 60_000} minutes for today."
+                break
+            }
+            if (scrollLimit > 0 && Store.scrolls(this, pkg) >= scrollLimit) {
+                blockedApp = Apps.all[pkg]
+                reason = "You scrolled through $scrollLimit videos today."
+                break
+            }
+        }
+        if (blockedApp != null) showOverlay(blockedApp, reason) else hideOverlay()
     }
 
-    private fun instagramUsage(): Pair<Long, Boolean> {
+    private fun usageFor(pkgs: Set<String>): Map<String, Pair<Long, Boolean>> {
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
@@ -76,41 +95,68 @@ class MonitorService : Service() {
         val now = System.currentTimeMillis()
         val events = usm.queryEvents(cal.timeInMillis, now)
         val e = UsageEvents.Event()
-        var total = 0L
-        var resumedAt = -1L
+        val total = HashMap<String, Long>()
+        val resumedAt = HashMap<String, Long>()
         while (events.hasNextEvent()) {
             events.getNextEvent(e)
-            if (e.packageName != IG) continue
+            val pkg = e.packageName
+            if (pkg !in pkgs) continue
             when (e.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED ->
-                    if (resumedAt < 0) resumedAt = e.timeStamp
-                UsageEvents.Event.ACTIVITY_PAUSED ->
-                    if (resumedAt >= 0) {
-                        total += e.timeStamp - resumedAt
-                        resumedAt = -1
-                    }
+                    if (!resumedAt.containsKey(pkg)) resumedAt[pkg] = e.timeStamp
+                UsageEvents.Event.ACTIVITY_PAUSED -> {
+                    val r = resumedAt.remove(pkg)
+                    if (r != null) total[pkg] = (total[pkg] ?: 0L) + (e.timeStamp - r)
+                }
             }
         }
-        val fg = resumedAt >= 0
-        if (fg) total += now - resumedAt
-        return Pair(total, fg)
+        val out = HashMap<String, Pair<Long, Boolean>>()
+        for (pkg in pkgs) {
+            val r = resumedAt[pkg]
+            var t = total[pkg] ?: 0L
+            if (r != null) t += now - r
+            out[pkg] = Pair(t, r != null)
+        }
+        return out
     }
 
-    private fun showOverlay() {
+    private fun showOverlay(appName: String, reason: String) {
         if (overlay != null || !Settings.canDrawOverlays(this)) return
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val dp = resources.displayMetrics.density
+
         val v = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#F2000000"))
+            setPadding((24 * dp).toInt(), 0, (24 * dp).toInt(), 0)
+            setBackgroundColor(Color.parseColor("#F2111827"))
             addView(TextView(context).apply {
-                text = "Time's up.\nYou reached your Instagram limit for today."
-                setTextColor(Color.WHITE)
-                textSize = 22f
+                text = "Doomstop"
+                setTextColor(Color.parseColor("#EF4444"))
+                textSize = 16f
                 gravity = Gravity.CENTER
+            })
+            addView(TextView(context).apply {
+                text = "$appName is locked for now"
+                setTextColor(Color.WHITE)
+                textSize = 26f
+                gravity = Gravity.CENTER
+                setPadding(0, (12 * dp).toInt(), 0, (8 * dp).toInt())
+            })
+            addView(TextView(context).apply {
+                text = reason + "\nGo do something real. You can come back tomorrow."
+                setTextColor(Color.parseColor("#9CA3AF"))
+                textSize = 16f
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, (28 * dp).toInt())
             })
             addView(Button(context).apply {
                 text = "Go home"
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#EF4444"))
+                    cornerRadius = 28 * dp
+                }
                 setOnClickListener { goHome() }
             })
         }
