@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">Counts how many times you scroll in the apps you chose, so Doomstop can block them at your limit. It does not read or store any content.</string>
+</resources>
