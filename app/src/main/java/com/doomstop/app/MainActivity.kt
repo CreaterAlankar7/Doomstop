@@ -114,7 +114,6 @@ class MainActivity : AppCompatActivity() {
         root.addView(button("3. Accessibility (scroll counter)") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         })
-
         root.addView(label("Control"))
         root.addView(button("4. Save and start") {
             val minutes = timeInput.text.toString().toIntOrNull() ?: 0
@@ -124,18 +123,26 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Choose at least one app", Toast.LENGTH_SHORT).show()
                 return@button
             }
-            prefs.edit()
-                .putInt("limit", minutes)
-                .putInt("scroll_limit", scrolls)
-                .putStringSet("apps", apps)
-                .putBoolean("reels_only", reels.isChecked)
-                .putBoolean("enabled", true)
-                .apply()
-            if (Build.VERSION.SDK_INT >= 33) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            val changed = minutes != prefs.getInt("limit", 30) ||
+                scrolls != prefs.getInt("scroll_limit", 0) ||
+                apps != Store.selectedApps(this) ||
+                reels.isChecked != prefs.getBoolean("reels_only", false)
+            val save = {
+                prefs.edit()
+                    .putInt("limit", minutes)
+                    .putInt("scroll_limit", scrolls)
+                    .putStringSet("apps", apps)
+                    .putBoolean("reels_only", reels.isChecked)
+                    .putBoolean("enabled", true)
+                    .apply()
+                if (Build.VERSION.SDK_INT >= 33) {
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+                }
+                startForegroundService(Intent(this, MonitorService::class.java))
+                refresh()
             }
-            startForegroundService(Intent(this, MonitorService::class.java))
-            refresh()
+            val secret = prefs.getString("otp_secret", "") ?: ""
+            if (secret.isNotEmpty() && changed) askCode(save) else save()
         })
         root.addView(button("Stop") {
             val secret = prefs.getString("otp_secret", "") ?: ""
