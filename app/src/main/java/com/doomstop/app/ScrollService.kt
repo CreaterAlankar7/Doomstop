@@ -17,7 +17,7 @@ class ScrollService : AccessibilityService() {
         val now = System.currentTimeMillis()
         val newSwipe = now - lastEvent > 600
         lastEvent = now
-        if (newSwipe) Store.addScroll(this)
+        if (newSwipe) Store.addScroll(this, pkg)
     }
 
     override fun onInterrupt() {}
