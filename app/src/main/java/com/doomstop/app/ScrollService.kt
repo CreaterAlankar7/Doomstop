@@ -9,7 +9,7 @@ class ScrollService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg !in Store.selectedApps(this)) return
+        //if (pkg !in Store.selectedApps(this)) return
         if (Store.prefs(this).getBoolean("reels_only", false)) {
             val cls = event.className?.toString() ?: ""
             if (!cls.contains("ViewPager")) return
