@@ -10,7 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -32,8 +31,8 @@ class MonitorService : Service() {
 
     private val tick = object : Runnable {
         override fun run() {
-            check()
-            handler.postDelayed(this, 3000)
+            evaluate()
+            handler.postDelayed(this, 1500)
         }
     }
 
@@ -60,33 +59,29 @@ class MonitorService : Service() {
         return START_STICKY
     }
 
-    private fun check() {
+    private fun evaluate() {
         val p = Store.prefs(this)
-        val limitMs = p.getInt("limit", 30) * 60_000L
-        val scrollLimit = p.getInt("scroll_limit", 50)
-        val apps = Store.enabled(this)
-        val usage = usageFor(apps)
+        val limitMin = p.getInt("limit", 30)
+        val scrollLimit = p.getInt("scroll_limit", 0)
+        val apps = Store.selectedApps(this)
 
-        var blockedApp: String? = null
-        var reason = ""
-        for (pkg in apps) {
-            val (used, fg) = usage[pkg] ?: Pair(0L, false)
-            if (!fg) continue
-            if (used >= limitMs) {
-                blockedApp = Apps.all[pkg]
-                reason = "You used up your ${limitMs / 60_000} minutes for today."
-                break
+        val (used, inForeground) = usage(apps)
+        val overTime = limitMin > 0 && used >= limitMin * 60_000L
+        val overScroll = scrollLimit > 0 && Store.scrolls(this) >= scrollLimit
+
+        if (inForeground && (overTime || overScroll)) {
+            val msg = if (overScroll) {
+                "You hit your scroll limit\n($scrollLimit scrolls today)."
+            } else {
+                "You hit your daily time limit\n($limitMin minutes)."
             }
-            if (scrollLimit > 0 && Store.scrolls(this, pkg) >= scrollLimit) {
-                blockedApp = Apps.all[pkg]
-                reason = "You scrolled through $scrollLimit videos today."
-                break
-            }
+            showOverlay(msg)
+        } else {
+            hideOverlay()
         }
-        if (blockedApp != null) showOverlay(blockedApp, reason) else hideOverlay()
     }
 
-    private fun usageFor(pkgs: Set<String>): Map<String, Pair<Long, Boolean>> {
+    private fun usage(apps: Set<String>): Pair<Long, Boolean> {
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
@@ -95,68 +90,48 @@ class MonitorService : Service() {
         val now = System.currentTimeMillis()
         val events = usm.queryEvents(cal.timeInMillis, now)
         val e = UsageEvents.Event()
-        val total = HashMap<String, Long>()
-        val resumedAt = HashMap<String, Long>()
+        val resumed = HashMap<String, Long>()
+        var total = 0L
         while (events.hasNextEvent()) {
             events.getNextEvent(e)
-            val pkg = e.packageName
-            if (pkg !in pkgs) continue
+            if (e.packageName !in apps) continue
             when (e.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED ->
-                    if (!resumedAt.containsKey(pkg)) resumedAt[pkg] = e.timeStamp
+                    if (!resumed.containsKey(e.packageName)) resumed[e.packageName] = e.timeStamp
                 UsageEvents.Event.ACTIVITY_PAUSED -> {
-                    val r = resumedAt.remove(pkg)
-                    if (r != null) total[pkg] = (total[pkg] ?: 0L) + (e.timeStamp - r)
+                    val start = resumed.remove(e.packageName)
+                    if (start != null) total += e.timeStamp - start
                 }
             }
         }
-        val out = HashMap<String, Pair<Long, Boolean>>()
-        for (pkg in pkgs) {
-            val r = resumedAt[pkg]
-            var t = total[pkg] ?: 0L
-            if (r != null) t += now - r
-            out[pkg] = Pair(t, r != null)
-        }
-        return out
+        for (start in resumed.values) total += now - start
+        return Pair(total, resumed.isNotEmpty())
     }
 
-    private fun showOverlay(appName: String, reason: String) {
+    private fun showOverlay(msg: String) {
         if (overlay != null || !Settings.canDrawOverlays(this)) return
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val dp = resources.displayMetrics.density
-
+        val pad = (24 * resources.displayMetrics.density).toInt()
         val v = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding((24 * dp).toInt(), 0, (24 * dp).toInt(), 0)
-            setBackgroundColor(Color.parseColor("#F2111827"))
+            setPadding(pad, pad, pad, pad)
+            setBackgroundColor(Color.parseColor("#F2101820"))
             addView(TextView(context).apply {
-                text = "Doomstop"
-                setTextColor(Color.parseColor("#EF4444"))
-                textSize = 16f
+                text = "DOOMSTOP"
+                setTextColor(Color.parseColor("#E53935"))
+                textSize = 30f
                 gravity = Gravity.CENTER
             })
             addView(TextView(context).apply {
-                text = "$appName is locked for now"
+                text = msg
                 setTextColor(Color.WHITE)
-                textSize = 26f
+                textSize = 20f
                 gravity = Gravity.CENTER
-                setPadding(0, (12 * dp).toInt(), 0, (8 * dp).toInt())
-            })
-            addView(TextView(context).apply {
-                text = reason + "\nGo do something real. You can come back tomorrow."
-                setTextColor(Color.parseColor("#9CA3AF"))
-                textSize = 16f
-                gravity = Gravity.CENTER
-                setPadding(0, 0, 0, (28 * dp).toInt())
+                setPadding(0, pad, 0, pad)
             })
             addView(Button(context).apply {
                 text = "Go home"
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#EF4444"))
-                    cornerRadius = 28 * dp
-                }
                 setOnClickListener { goHome() }
             })
         }
