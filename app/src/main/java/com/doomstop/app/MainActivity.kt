@@ -14,12 +14,34 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun askCode(onOk: () -> Unit) {
+        val secret = Store.prefs(this).getString("otp_secret", "") ?: ""
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "6-digit code"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Enter OTP")
+            .setMessage("Open your authenticator app and type the current code.")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                if (Totp.verify(secret, input.text.toString())) {
+                    onOk()
+                } else {
+                    Toast.makeText(this, "Wrong code", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,6 +88,9 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(title)
         root.addView(status)
+        root.addView(button("Today's usage and scrolls") {
+            startActivity(Intent(this, StatsActivity::class.java))
+        })
         root.addView(label("Daily time limit in minutes (0 = off)"))
         root.addView(timeInput)
         root.addView(label("Daily scroll limit (0 = off)"))
@@ -113,9 +138,45 @@ class MainActivity : AppCompatActivity() {
             refresh()
         })
         root.addView(button("Stop") {
-            prefs.edit().putBoolean("enabled", false).apply()
-            stopService(Intent(this, MonitorService::class.java))
-            refresh()
+            val secret = prefs.getString("otp_secret", "") ?: ""
+            val doStop = {
+                prefs.edit().putBoolean("enabled", false).apply()
+                stopService(Intent(this, MonitorService::class.java))
+                refresh()
+            }
+            if (secret.isEmpty()) doStop() else askCode(doStop)
+        })
+
+        root.addView(label("OTP protection"))
+        root.addView(button("OTP for Stop (set up / remove)") {
+            val secret = prefs.getString("otp_secret", "") ?: ""
+            if (secret.isEmpty()) {
+                val s = Totp.newSecret()
+                prefs.edit().putString("otp_secret", s).apply()
+                val tv = TextView(this).apply {
+                    text = s
+                    textSize = 22f
+                    setTextIsSelectable(true)
+                    setPadding(dp(24), dp(16), dp(24), dp(8))
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Your OTP key")
+                    .setMessage(
+                        "In an authenticator app on ANOTHER device, choose " +
+                            "\"Enter a setup key\" (time based) and type this key. " +
+                            "It will NOT be shown again."
+                    )
+                    .setView(tv)
+                    .setCancelable(false)
+                    .setPositiveButton("I added it") { _, _ -> refresh() }
+                    .show()
+            } else {
+                askCode {
+                    prefs.edit().remove("otp_secret").apply()
+                    Toast.makeText(this, "OTP removed", Toast.LENGTH_SHORT).show()
+                    refresh()
+                }
+            }
         })
 
         setContentView(ScrollView(this).apply { addView(root) })
@@ -127,8 +188,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        val on = Store.prefs(this).getBoolean("enabled", false)
+        val p = Store.prefs(this)
+        val on = p.getBoolean("enabled", false)
+        val otp = !p.getString("otp_secret", "").isNullOrEmpty()
         status.text = (if (on) "Status: RUNNING" else "Status: STOPPED") +
-            "\nScrolls today: " + Store.scrolls(this)
+            "\nScrolls today: " + Store.scrolls(this) +
+            "\nOTP for Stop: " + (if (otp) "ON" else "OFF")
     }
 }
