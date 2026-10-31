@@ -95,6 +95,11 @@ class MainActivity : AppCompatActivity() {
             startForegroundService(Intent(this, MonitorService::class.java))
             Toast.makeText(this, "Saved. Doomstop is running.", Toast.LENGTH_SHORT).show()
         })
+        root.addView(btn("5. Stop") {
+            prefs.edit().putBoolean("running", false).apply()
+            stopService(Intent(this, MonitorService::class.java))
+            Toast.makeText(this, "Doomstop stopped.", Toast.LENGTH_SHORT).show()
+        })
         root.addView(stats)
 
         setContentView(ScrollView(this).apply { addView(root) })
