@@ -15,13 +15,25 @@
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
 
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".FocusActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".StatsActivity" android:exported="false" />
+
+        <service
+            android:name=".FocusService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="focus_timer" />
+        </service>
+
         <service
             android:name=".MonitorService"
             android:exported="false"
